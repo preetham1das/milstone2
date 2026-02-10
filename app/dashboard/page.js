@@ -12,8 +12,10 @@ import {
   where,
   getDocs,
   orderBy,
+  updateDoc,
+  serverTimestamp,
 } from "firebase/firestore";
-import { analyzeText, analyzeFile, extractCSVData } from "@/lib/gemini";
+import { extractCSVData } from "@/lib/csv";
 
 export default function DashboardPage() {
   const user = useAuthStore((state) => state.user);
@@ -25,10 +27,27 @@ export default function DashboardPage() {
   const [textInput, setTextInput] = useState("");
   const [fileInput, setFileInput] = useState(null);
   const [analysisMessage, setAnalysisMessage] = useState("");
+  const [rateLimitUntil, setRateLimitUntil] = useState(null);
+  const [rateLimitRemaining, setRateLimitRemaining] = useState(0);
+  const [initError, setInitError] = useState(null);
 
   if (!user) {
     redirect("/auth");
   }
+
+  // Helper to format Firebase errors for users
+  const formatFirebaseError = (error) => {
+    const code = error?.code || "";
+    const message = error?.message || error?.toString?.() || "Unknown error";
+
+    if (code === "permission-denied") {
+      return "Permission denied. Please ensure Firestore security rules are configured. See FIRESTORE_RULES.md for setup instructions.";
+    }
+    if (code === "unavailable") {
+      return "Firestore is temporarily unavailable. Please try again.";
+    }
+    return message;
+  };
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -53,6 +72,9 @@ export default function DashboardPage() {
         setAnalysisRecords(records);
       } catch (error) {
         console.error("Error fetching analysis records:", error);
+        if (error?.code === "permission-denied") {
+          setInitError(formatFirebaseError(error));
+        }
       } finally {
         setPastAnalysisLoading(false);
       }
@@ -60,6 +82,25 @@ export default function DashboardPage() {
 
     fetchAnalysisRecords();
   }, [user.email]);
+
+  // Countdown for rate limit window
+  useEffect(() => {
+    if (!rateLimitUntil) return;
+    const interval = setInterval(() => {
+      const remainingMs = rateLimitUntil - Date.now();
+      if (remainingMs <= 0) {
+        setRateLimitRemaining(0);
+        setRateLimitUntil(null);
+        setAnalysisMessage("");
+        clearInterval(interval);
+      } else {
+        setRateLimitRemaining(Math.ceil(remainingMs / 1000));
+        setAnalysisMessage(`Rate limit exceeded. Try again in ${Math.ceil(remainingMs / 1000)}s.`);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [rateLimitUntil]);
 
   // Handle text analysis
   const handleAnalyzeText = async (e) => {
@@ -70,43 +111,101 @@ export default function DashboardPage() {
     }
 
     setLoading(true);
-    setAnalysisMessage("Analyzing your text...");
+      // First: save the input to Firestore so we have a record even if analysis fails
+      let docRef = null;
+      try {
+        setAnalysisMessage("Saving input...");
+        docRef = await addDoc(collection(db, "analysisRecords"), {
+          userEmail: user.email,
+          content: textInput,
+          analysis: "Pending",
+          timestamp: serverTimestamp(),
+          type: "text",
+        });
+      } catch (saveError) {
+        console.error("Error saving initial record:", saveError);
+        setLoading(false);
+        setAnalysisMessage(formatFirebaseError(saveError));
+        return;
+      }
 
-    try {
-      const result = await analyzeText(textInput);
+      // Then perform analysis and update the record
+      try {
+        setAnalysisMessage("Analyzing your text...");
+        const response = await fetch("/api/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "text", text: textInput }),
+        });
 
-      // Save to Firestore
-      await addDoc(collection(db, "analysisRecords"), {
-        userEmail: user.email,
-        content: textInput,
-        analysis: result.analysis,
-        timestamp: new Date(),
-        type: "text",
-      });
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || "Analysis failed");
+        }
 
-      setAnalysisMessage("Analysis saved successfully!");
-      setTextInput("");
+        const result = await response.json();
 
-      // Refresh analysis records
-      const recordsRef = collection(db, "analysisRecords");
-      const q = query(
-        recordsRef,
-        where("userEmail", "==", user.email),
-        orderBy("timestamp", "desc")
-      );
-      const querySnapshot = await getDocs(q);
-      const records = querySnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-      setAnalysisRecords(records);
+        if (docRef) {
+          try {
+            await updateDoc(docRef, {
+              analysis: result.analysis,
+              completedAt: serverTimestamp(),
+            });
+          } catch (updErr) {
+            console.error("Failed to update record with analysis:", updErr);
+          }
+        }
 
-      setTimeout(() => setAnalysisMessage(""), 3000);
-    } catch (error) {
-      setAnalysisMessage(`Error: ${error.message}`);
-    } finally {
-      setLoading(false);
-    }
+        setAnalysisMessage("Analysis saved successfully!");
+        setTextInput("");
+
+        // Refresh analysis records
+        const recordsRef = collection(db, "analysisRecords");
+        const q = query(
+          recordsRef,
+          where("userEmail", "==", user.email),
+          orderBy("timestamp", "desc")
+        );
+        const querySnapshot = await getDocs(q);
+        const records = querySnapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+        setAnalysisRecords(records);
+
+        setTimeout(() => setAnalysisMessage(""), 3000);
+      } catch (error) {
+        console.error("Error during analysis:", error);
+
+        // Update Firestore record with error info if possible
+        if (docRef) {
+          try {
+            await updateDoc(docRef, {
+              analysis: `Error: ${error?.message || String(error)}`,
+              completedAt: serverTimestamp(),
+            });
+          } catch (updErr) {
+            console.error("Failed to update record after error:", updErr);
+          }
+        }
+
+        if (error?.retryAfter) {
+          const secs = Math.ceil(error.retryAfter);
+          const until = Date.now() + secs * 1000;
+          setRateLimitUntil(until);
+          setRateLimitRemaining(secs);
+          setAnalysisMessage(`Rate limit exceeded. Try again in ${secs}s.`);
+        } else if (error?.code === "permission-denied") {
+          setAnalysisMessage(formatFirebaseError(error));
+        } else if (error?.code === "unavailable") {
+          setAnalysisMessage("Analysis service is temporarily unavailable. Please try again.");
+        } else {
+          const errMsg = error?.message || error?.toString?.() || "Unknown error occurred";
+          setAnalysisMessage(`Error: ${errMsg}`);
+        }
+      } finally {
+        setLoading(false);
+      }
   };
 
   // Handle file analysis
@@ -124,7 +223,22 @@ export default function DashboardPage() {
       const fileContent = await fileInput.text();
       const fileName = fileInput.name;
 
-      const result = await analyzeFile(fileContent, fileName);
+      const response = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "file",
+          fileContent,
+          fileName,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Analysis failed");
+      }
+
+      const result = await response.json();
 
       // If CSV, also extract and store the data
       let csvData = null;
@@ -139,7 +253,7 @@ export default function DashboardPage() {
         fileContent: fileContent,
         csvData: csvData,
         analysis: result.analysis,
-        timestamp: new Date(),
+        timestamp: serverTimestamp(),
         type: "file",
       });
 
@@ -162,7 +276,25 @@ export default function DashboardPage() {
 
       setTimeout(() => setAnalysisMessage(""), 3000);
     } catch (error) {
-      setAnalysisMessage(`Error: ${error.message}`);
+      console.error("Error caught:", error);
+      console.error("Error type:", typeof error);
+      console.error("Error keys:", Object.keys(error || {}));
+      console.error("Error toString:", error?.toString?.());
+      
+      if (error?.retryAfter) {
+        const secs = Math.ceil(error.retryAfter);
+        const until = Date.now() + secs * 1000;
+        setRateLimitUntil(until);
+        setRateLimitRemaining(secs);
+        setAnalysisMessage(`Rate limit exceeded. Try again in ${secs}s.`);
+      } else if (error?.code === "permission-denied") {
+        setAnalysisMessage(formatFirebaseError(error));
+      } else if (error?.code === "unavailable") {
+        setAnalysisMessage("Firestore is temporarily unavailable. Please try again.");
+      } else {
+        const errMsg = error?.message || error?.toString?.() || "Unknown error occurred";
+        setAnalysisMessage(`Error: ${errMsg}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -217,6 +349,14 @@ export default function DashboardPage() {
           </button>
         </div>
 
+        {/* Initialization Error Banner */}
+        {initError && (
+          <div className="mb-6 bg-red-50 border border-red-200 text-red-800 p-4 rounded-lg">
+            <p className="font-semibold">⚠️ Setup Required</p>
+            <p className="text-sm mt-2">{initError}</p>
+          </div>
+        )}
+
         {/* Profile Tab */}
         {activeTab === "profile" && (
           <div className="bg-white p-8 rounded-2xl shadow">
@@ -259,14 +399,14 @@ export default function DashboardPage() {
                   onChange={(e) => setTextInput(e.target.value)}
                   placeholder="Paste or type your feedback/comments here..."
                   className="w-full h-32 p-4 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-black"
-                  disabled={loading}
+                  disabled={loading || rateLimitRemaining > 0}
                 />
                 <button
                   type="submit"
-                  disabled={loading}
+                  disabled={loading || rateLimitRemaining > 0}
                   className="mt-4 w-full bg-black text-white py-3 rounded-lg font-semibold hover:bg-gray-800 disabled:bg-gray-400 transition"
                 >
-                  {loading ? "Analyzing..." : "Analyze Comments"}
+                  {loading ? "Analyzing..." : rateLimitRemaining > 0 ? `Rate limited (${rateLimitRemaining}s)` : "Analyze Comments"}
                 </button>
               </form>
             </div>
@@ -282,7 +422,7 @@ export default function DashboardPage() {
                     type="file"
                     accept=".csv,.pdf,.txt"
                     onChange={(e) => setFileInput(e.target.files?.[0] || null)}
-                    disabled={loading}
+                    disabled={loading || rateLimitRemaining > 0}
                     className="hidden"
                     id="fileInput"
                   />
@@ -299,17 +439,24 @@ export default function DashboardPage() {
                 </div>
                 <button
                   type="submit"
-                  disabled={loading || !fileInput}
+                  disabled={loading || !fileInput || rateLimitRemaining > 0}
                   className="mt-4 w-full bg-black text-white py-3 rounded-lg font-semibold hover:bg-gray-800 disabled:bg-gray-400 transition"
                 >
-                  {loading ? "Analyzing..." : "Analyze File"}
+                  {loading ? "Analyzing..." : rateLimitRemaining > 0 ? `Rate limited (${rateLimitRemaining}s)` : "Analyze File"}
                 </button>
               </form>
             </div>
 
             {/* Analysis Message */}
             {analysisMessage && (
-              <div className="bg-blue-50 border border-blue-200 text-blue-800 p-4 rounded-lg">
+              <div className={`border-l-4 p-5 rounded-lg font-medium transition-all ${
+                analysisMessage.includes("Error") || analysisMessage.includes("Rate limit")
+                  ? "bg-red-50 border-l-red-500 text-red-800"
+                  : analysisMessage.includes("saved successfully")
+                  ? "bg-green-50 border-l-green-500 text-green-800"
+                  : "bg-blue-50 border-l-blue-500 text-blue-800"
+              }`}>
+                {analysisMessage.includes("Error") || analysisMessage.includes("Rate limit") ? "⚠️ " : "✓ "}
                 {analysisMessage}
               </div>
             )}
@@ -331,59 +478,80 @@ export default function DashboardPage() {
                 files!
               </p>
             ) : (
-              <div className="space-y-4">
+              <div className="space-y-6">
                 {analysisRecords.map((record) => (
                   <div
                     key={record.id}
-                    className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition"
+                    className="border border-gray-300 rounded-xl p-6 hover:shadow-lg transition bg-gradient-to-br from-white to-gray-50"
                   >
-                    <div className="flex justify-between items-start mb-3">
+                    {/* Header */}
+                    <div className="flex justify-between items-start mb-4 pb-4 border-b border-gray-200">
                       <div>
-                        <h3 className="font-semibold text-gray-900">
+                        <h3 className="font-bold text-lg text-gray-900">
                           {record.type === "file"
-                            ? record.fileName
-                            : "Text Analysis"}
+                            ? `📄 ${record.fileName}`
+                            : "💬 Text Analysis"}
                         </h3>
-                        <p className="text-sm text-gray-600">
-                          {record.type === "file" ? "File" : "Text"} Analysis •{" "}
+                        <p className="text-xs text-gray-500 mt-1">
+                          {record.type === "file" ? "File" : "Text"} Analysis • {" "}
                           {new Date(record.timestamp?.toDate?.()).toLocaleString()}
                         </p>
                       </div>
-                      <span className="bg-gray-200 text-gray-800 px-3 py-1 rounded-full text-sm font-medium">
+                      <span className={`px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wide ${
+                        record.type === "file" 
+                          ? "bg-blue-100 text-blue-800" 
+                          : "bg-purple-100 text-purple-800"
+                      }`}>
                         {record.type}
                       </span>
                     </div>
 
+                    {/* CSV Data Preview */}
                     {record.csvData && (
-                      <div className="mb-3">
-                        <p className="text-sm font-semibold text-gray-700 mb-2">
-                          CSV Data Preview:
+                      <div className="mb-5">
+                        <p className="text-xs font-bold text-gray-700 mb-3 uppercase tracking-wide">
+                          📊 CSV Data Summary
                         </p>
-                        <div className="bg-gray-50 p-3 rounded max-h-40 overflow-y-auto text-xs">
-                          <pre className="font-mono text-gray-600">
-                            {JSON.stringify(record.csvData.slice(0, 3), null, 2)}
-                          </pre>
+                        <div className="bg-white border border-gray-200 p-4 rounded-lg max-h-48 overflow-y-auto">
+                          <div className="text-xs space-y-2">
+                            {record.csvData.slice(0, 3).map((row, idx) => (
+                              <div key={idx} className="p-2 bg-gray-50 rounded border border-gray-200">
+                                <pre className="font-mono text-gray-700 whitespace-pre-wrap break-words">
+                                  {JSON.stringify(row, null, 2)}
+                                </pre>
+                              </div>
+                            ))}
+                            {record.csvData.length > 3 && (
+                              <p className="text-gray-600 italic pt-2">
+                                ... and {record.csvData.length - 3} more rows
+                              </p>
+                            )}
+                          </div>
                         </div>
                       </div>
                     )}
 
-                    <div className="bg-gray-50 p-4 rounded">
-                      <p className="text-sm font-semibold text-gray-700 mb-2">
-                        AI Analysis:
+                    {/* AI Analysis */}
+                    <div className="mb-4 bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 p-5 rounded-lg">
+                      <p className="text-xs font-bold text-indigo-900 mb-3 uppercase tracking-wide">
+                        🤖 AI Analysis & Insights
                       </p>
-                      <p className="text-gray-700 text-sm whitespace-pre-wrap line-clamp-4">
-                        {record.analysis}
-                      </p>
+                      <div className="prose prose-sm max-w-none">
+                        <div className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap break-words font-normal">
+                          {record.analysis}
+                        </div>
+                      </div>
                     </div>
 
+                    {/* Original Content */}
                     {record.type === "text" && (
-                      <div className="mt-3 bg-gray-50 p-4 rounded">
-                        <p className="text-sm font-semibold text-gray-700 mb-2">
-                          Original Content:
+                      <div className="bg-gray-100 border border-gray-300 p-5 rounded-lg">
+                        <p className="text-xs font-bold text-gray-700 mb-3 uppercase tracking-wide">
+                          📝 Original Content
                         </p>
-                        <p className="text-gray-700 text-sm line-clamp-3">
+                        <div className="text-sm text-gray-700 bg-white p-3 rounded border border-gray-200 max-h-32 overflow-y-auto">
                           {record.content}
-                        </p>
+                        </div>
                       </div>
                     )}
                   </div>
