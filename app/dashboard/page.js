@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuthStore } from "@/Store/useAuthStore";
-import { signOut } from "firebase/auth";
+// import { signOut } from "firebase/auth";
 import { auth, db } from "@/lib/firebase";
 import { redirect, useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
@@ -16,10 +16,11 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { extractCSVData } from "@/lib/csv";
+import Navbar from "../components/Navbar";
 
 export default function DashboardPage() {
   const user = useAuthStore((state) => state.user);
-  const router = useRouter();
+  // const router = useRouter();
   const [activeTab, setActiveTab] = useState("analyze");
   const [analysisRecords, setAnalysisRecords] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -30,12 +31,17 @@ export default function DashboardPage() {
   const [rateLimitUntil, setRateLimitUntil] = useState(null);
   const [rateLimitRemaining, setRateLimitRemaining] = useState(0);
   const [initError, setInitError] = useState(null);
+  const [latestAnalysis, setLatestAnalysis] = useState(null);
+ const cleanMarkdown = (text = "") => {
+    return text.replace(/\*\*(.*?)\*\*/g, "$1");
+  };
+
 
   if (!user) {
     redirect("/auth");
   }
 
-  
+
   const formatFirebaseError = (error) => {
     const code = error?.code || "";
     const message = error?.message || error?.toString?.() || "Unknown error";
@@ -49,12 +55,11 @@ export default function DashboardPage() {
     return message;
   };
 
-  const handleLogout = async () => {
-    await signOut(auth);
-    router.push("/auth");
-  };
+  // const handleLogout = async () => {
+  //   await signOut(auth);
+  //   router.push("/auth");
+  // };
 
- 
   useEffect(() => {
     const fetchAnalysisRecords = async () => {
       try {
@@ -83,6 +88,7 @@ export default function DashboardPage() {
     fetchAnalysisRecords();
   }, [user.email]);
 
+ 
   useEffect(() => {
     if (!rateLimitUntil) return;
     const interval = setInterval(() => {
@@ -101,7 +107,7 @@ export default function DashboardPage() {
     return () => clearInterval(interval);
   }, [rateLimitUntil]);
 
- 
+
   const handleAnalyzeText = async (e) => {
     e.preventDefault();
     if (!textInput.trim()) {
@@ -157,8 +163,12 @@ export default function DashboardPage() {
 
         setAnalysisMessage("Analysis saved successfully!");
         setTextInput("");
-
-        
+        setLatestAnalysis({
+          type: "text",
+          analysis: result.analysis,
+          content: textInput,
+        });
+        // Refresh analysis records
         const recordsRef = collection(db, "analysisRecords");
         const q = query(
           recordsRef,
@@ -171,7 +181,6 @@ export default function DashboardPage() {
           ...doc.data(),
         }));
         setAnalysisRecords(records);
-
         setTimeout(() => setAnalysisMessage(""), 3000);
       } catch (error) {
         console.error("Error during analysis:", error);
@@ -245,7 +254,7 @@ export default function DashboardPage() {
         csvData = await extractCSVData(fileContent);
       }
 
-     
+   
       await addDoc(collection(db, "analysisRecords"), {
         userEmail: user.email,
         fileName: fileName,
@@ -258,8 +267,14 @@ export default function DashboardPage() {
 
       setAnalysisMessage("File analysis saved successfully!");
       setFileInput(null);
-
-      
+      setLatestAnalysis({
+        type: "file",
+        analysis: result.analysis,
+        fileName,
+        csvData,
+        fileContent,
+      });
+     
       const recordsRef = collection(db, "analysisRecords");
       const q = query(
         recordsRef,
@@ -272,7 +287,6 @@ export default function DashboardPage() {
         ...doc.data(),
       }));
       setAnalysisRecords(records);
-
       setTimeout(() => setAnalysisMessage(""), 3000);
     } catch (error) {
       console.error("Error caught:", error);
@@ -301,7 +315,7 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-white shadow-sm">
+      {/* <header className="bg-white shadow-sm">
         <div className="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
           <h1 className="text-xl font-bold">AI Feedback Analyzer</h1>
           <button
@@ -311,8 +325,8 @@ export default function DashboardPage() {
             Logout
           </button>
         </div>
-      </header>
-
+      </header> */}
+<Navbar />
       <main className="max-w-6xl mx-auto px-6 py-8">
         {/* Tab Navigation */}
         <div className="flex gap-4 mb-8 border-b border-gray-200">
@@ -348,15 +362,15 @@ export default function DashboardPage() {
           </button>
         </div>
 
-        
+        {/* Initialization Error Banner */}
         {initError && (
           <div className="mb-6 bg-red-50 border border-red-200 text-red-800 p-4 rounded-lg">
-            <p className="font-semibold"> Setup Required</p>
+            <p className="font-semibold">⚠️ Setup Required</p>
             <p className="text-sm mt-2">{initError}</p>
           </div>
         )}
 
-        
+       
         {activeTab === "profile" && (
           <div className="bg-white p-8 rounded-2xl shadow">
             <h2 className="text-2xl font-semibold mb-6 text-gray-900">
@@ -384,10 +398,9 @@ export default function DashboardPage() {
           </div>
         )}
 
-        
         {activeTab === "analyze" && (
           <div className="space-y-6">
-          
+           
             <div className="bg-white p-8 rounded-2xl shadow">
               <h2 className="text-2xl font-semibold mb-4 text-gray-900">
                 Paste Comments
@@ -410,7 +423,7 @@ export default function DashboardPage() {
               </form>
             </div>
 
-         
+            
             <div className="bg-white p-8 rounded-2xl shadow">
               <h2 className="text-2xl font-semibold mb-4 text-gray-900">
                 Upload File
@@ -446,7 +459,7 @@ export default function DashboardPage() {
               </form>
             </div>
 
-            
+           
             {analysisMessage && (
               <div className={`border-l-4 p-5 rounded-lg font-medium transition-all ${
                 analysisMessage.includes("Error") || analysisMessage.includes("Rate limit")
@@ -459,10 +472,65 @@ export default function DashboardPage() {
                 {analysisMessage}
               </div>
             )}
+
+            {latestAnalysis && (
+              <div className="mt-8">
+                <div className="mb-4 bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 border border-gray-700 p-6 rounded-2xl shadow-lg">
+                  <p className="text-xs font-bold text-blue-400 mb-3 uppercase tracking-wide">
+                    🤖 AI Analysis & Insights
+                  </p>
+                  <div className="prose prose-sm max-w-none">
+                    <div className="text-sm text-gray-100 leading-relaxed whitespace-pre-wrap break-words font-normal">
+                      {cleanMarkdown(latestAnalysis.analysis)}
+                    </div>
+                  </div>
+                </div>
+               
+                {latestAnalysis.type === "text" && (
+                  <div className="bg-gradient-to-br from-gray-800 via-gray-900 to-gray-800 border border-gray-700 p-5 rounded-2xl shadow-lg mt-4">
+                    <p className="text-xs font-bold text-blue-300 mb-3 uppercase tracking-wide flex items-center gap-2">
+                      <span className="text-lg">📝</span> Original Content
+                    </p>
+                    <div className="text-sm font-mono text-gray-100 bg-gray-900 p-3 rounded border border-gray-700 max-h-40 overflow-y-auto whitespace-pre-wrap break-words">
+                      {latestAnalysis.content}
+                    </div>
+                  </div>
+                )}
+                {latestAnalysis.type === "file" && (
+                  <div className="bg-gray-100 border border-gray-300 p-5 rounded-lg mt-4">
+                    <p className="text-xs font-bold text-gray-700 mb-3 uppercase tracking-wide">
+                      📄 File: {latestAnalysis.fileName}
+                    </p>
+                    {latestAnalysis.csvData && (
+                      <div className="mb-3">
+                        <p className="text-xs font-bold text-gray-700 mb-2 uppercase tracking-wide">
+                          📊 CSV Data Summary
+                        </p>
+                        <div className="bg-white border border-gray-200 p-4 rounded-lg max-h-48 overflow-y-auto">
+                          <div className="text-xs space-y-2">
+                            {latestAnalysis.csvData.slice(0, 3).map((row, idx) => (
+                              <div key={idx} className="p-2 bg-gray-50 rounded border border-gray-200">
+                                <pre className="font-mono text-gray-700 whitespace-pre-wrap break-words">
+                                  {JSON.stringify(row, null, 2)}
+                                </pre>
+                              </div>
+                            ))}
+                            {latestAnalysis.csvData.length > 3 && (
+                              <p className="text-gray-600 italic pt-2">
+                                ... and {latestAnalysis.csvData.length - 3} more rows
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
-        
         {activeTab === "records" && (
           <div className="bg-white p-8 rounded-2xl shadow">
             <h2 className="text-2xl font-semibold mb-6 text-gray-900">
@@ -473,43 +541,20 @@ export default function DashboardPage() {
               <p className="text-gray-600">Loading records...</p>
             ) : analysisRecords.length === 0 ? (
               <p className="text-gray-600 font-medium">
-                No analysis records yet. Start by analyzing some feedback or
-                files!
+                No analysis records yet. Start by analyzing some feedback or files!
               </p>
             ) : (
               <div className="space-y-6">
                 {analysisRecords.map((record) => (
                   <div
                     key={record.id}
-                    className="border border-gray-300 rounded-xl p-6 hover:shadow-lg transition bg-gradient-to-br from-white to-gray-50"
+                    className="rounded-xl shadow-lg transition bg-gradient-to-br from-white to-gray-50 w-full"
+                    style={{ width: '100%', maxWidth: '100vw', margin: 0, padding: '1rem' }}
                   >
-                   
-                    <div className="flex justify-between items-start mb-4 pb-4 border-b border-gray-200">
-                      <div>
-                        <h3 className="font-bold text-lg text-gray-900">
-                          {record.type === "file"
-                            ? `  ${record.fileName}`
-                            : "  Text Analysis"}
-                        </h3>
-                        <p className="text-xs text-gray-500 mt-1">
-                          {record.type === "file" ? "File" : "Text"} Analysis • {" "}
-                          {new Date(record.timestamp?.toDate?.()).toLocaleString()}
-                        </p>
-                      </div>
-                      <span className={`px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wide ${
-                        record.type === "file" 
-                          ? "bg-blue-100 text-blue-800" 
-                          : "bg-purple-100 text-purple-800"
-                      }`}>
-                        {record.type}
-                      </span>
-                    </div>
-
-                   
                     {record.csvData && (
                       <div className="mb-5">
                         <p className="text-xs font-bold text-gray-700 mb-3 uppercase tracking-wide">
-                           CSV Data Summary
+                          CSV Data Summary
                         </p>
                         <div className="bg-white border border-gray-200 p-4 rounded-lg max-h-48 overflow-y-auto">
                           <div className="text-xs space-y-2">
@@ -530,25 +575,23 @@ export default function DashboardPage() {
                       </div>
                     )}
 
-                   
-                    <div className="mb-4 bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 p-5 rounded-lg">
-                      <p className="text-xs font-bold text-indigo-900 mb-3 uppercase tracking-wide">
-                         AI Analysis & Insights
+                    <div className="mb-4 bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 border border-gray-700 p-4 rounded-2xl shadow-lg w-full" style={{ boxSizing: 'border-box' }}>
+                      <p className="text-xs font-bold text-blue-400 mb-3 uppercase tracking-wide">
+                        AI ANALYSIS & INSIGHTS
                       </p>
                       <div className="prose prose-sm max-w-none">
-                        <div className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap break-words font-normal">
-                          {record.analysis}
+                        <div className="text-sm text-gray-100 leading-relaxed whitespace-pre-wrap break-words font-normal">
+                          {cleanMarkdown(record.analysis)}
                         </div>
                       </div>
                     </div>
 
-                    
                     {record.type === "text" && (
-                      <div className="bg-gray-100 border border-gray-300 p-5 rounded-lg">
-                        <p className="text-xs font-bold text-gray-700 mb-3 uppercase tracking-wide">
-                           Original Content
+                      <div className="bg-gradient-to-br from-gray-800 via-gray-900 to-gray-800 border border-gray-700 p-4 rounded-2xl shadow-lg mt-4 w-full" style={{ boxSizing: 'border-box' }}>
+                        <p className="text-xs font-bold text-blue-300 mb-3 uppercase tracking-wide">
+                          Original Content
                         </p>
-                        <div className="text-sm text-gray-700 bg-white p-3 rounded border border-gray-200 max-h-32 overflow-y-auto">
+                        <div className="text-sm font-mono text-gray-100 bg-gray-900 p-3 rounded border border-gray-700 max-h-40 overflow-y-auto whitespace-pre-wrap break-words">
                           {record.content}
                         </div>
                       </div>
