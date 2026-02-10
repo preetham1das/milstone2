@@ -351,7 +351,7 @@ export default function DashboardPage() {
         
         {initError && (
           <div className="mb-6 bg-red-50 border border-red-200 text-red-800 p-4 rounded-lg">
-            <p className="font-semibold">⚠️ Setup Required</p>
+            <p className="font-semibold"> Setup Required</p>
             <p className="text-sm mt-2">{initError}</p>
           </div>
         )}
@@ -488,8 +488,8 @@ export default function DashboardPage() {
                       <div>
                         <h3 className="font-bold text-lg text-gray-900">
                           {record.type === "file"
-                            ? `📄 ${record.fileName}`
-                            : "💬 Text Analysis"}
+                            ? `  ${record.fileName}`
+                            : "  Text Analysis"}
                         </h3>
                         <p className="text-xs text-gray-500 mt-1">
                           {record.type === "file" ? "File" : "Text"} Analysis • {" "}
@@ -509,7 +509,7 @@ export default function DashboardPage() {
                     {record.csvData && (
                       <div className="mb-5">
                         <p className="text-xs font-bold text-gray-700 mb-3 uppercase tracking-wide">
-                          📊 CSV Data Summary
+                           CSV Data Summary
                         </p>
                         <div className="bg-white border border-gray-200 p-4 rounded-lg max-h-48 overflow-y-auto">
                           <div className="text-xs space-y-2">
@@ -533,7 +533,7 @@ export default function DashboardPage() {
                    
                     <div className="mb-4 bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 p-5 rounded-lg">
                       <p className="text-xs font-bold text-indigo-900 mb-3 uppercase tracking-wide">
-                        🤖 AI Analysis & Insights
+                         AI Analysis & Insights
                       </p>
                       <div className="prose prose-sm max-w-none">
                         <div className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap break-words font-normal">
@@ -546,7 +546,7 @@ export default function DashboardPage() {
                     {record.type === "text" && (
                       <div className="bg-gray-100 border border-gray-300 p-5 rounded-lg">
                         <p className="text-xs font-bold text-gray-700 mb-3 uppercase tracking-wide">
-                          📝 Original Content
+                           Original Content
                         </p>
                         <div className="text-sm text-gray-700 bg-white p-3 rounded border border-gray-200 max-h-32 overflow-y-auto">
                           {record.content}
