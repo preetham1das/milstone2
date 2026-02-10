@@ -35,7 +35,7 @@ export default function DashboardPage() {
     redirect("/auth");
   }
 
-  // Helper to format Firebase errors for users
+  
   const formatFirebaseError = (error) => {
     const code = error?.code || "";
     const message = error?.message || error?.toString?.() || "Unknown error";
@@ -54,7 +54,7 @@ export default function DashboardPage() {
     router.push("/auth");
   };
 
-  // Fetch past analysis records
+ 
   useEffect(() => {
     const fetchAnalysisRecords = async () => {
       try {
@@ -83,7 +83,6 @@ export default function DashboardPage() {
     fetchAnalysisRecords();
   }, [user.email]);
 
-  // Countdown for rate limit window
   useEffect(() => {
     if (!rateLimitUntil) return;
     const interval = setInterval(() => {
@@ -102,7 +101,7 @@ export default function DashboardPage() {
     return () => clearInterval(interval);
   }, [rateLimitUntil]);
 
-  // Handle text analysis
+ 
   const handleAnalyzeText = async (e) => {
     e.preventDefault();
     if (!textInput.trim()) {
@@ -111,7 +110,7 @@ export default function DashboardPage() {
     }
 
     setLoading(true);
-      // First: save the input to Firestore so we have a record even if analysis fails
+     
       let docRef = null;
       try {
         setAnalysisMessage("Saving input...");
@@ -129,7 +128,7 @@ export default function DashboardPage() {
         return;
       }
 
-      // Then perform analysis and update the record
+      
       try {
         setAnalysisMessage("Analyzing your text...");
         const response = await fetch("/api/analyze", {
@@ -159,7 +158,7 @@ export default function DashboardPage() {
         setAnalysisMessage("Analysis saved successfully!");
         setTextInput("");
 
-        // Refresh analysis records
+        
         const recordsRef = collection(db, "analysisRecords");
         const q = query(
           recordsRef,
@@ -177,7 +176,7 @@ export default function DashboardPage() {
       } catch (error) {
         console.error("Error during analysis:", error);
 
-        // Update Firestore record with error info if possible
+        
         if (docRef) {
           try {
             await updateDoc(docRef, {
@@ -208,7 +207,7 @@ export default function DashboardPage() {
       }
   };
 
-  // Handle file analysis
+
   const handleAnalyzeFile = async (e) => {
     e.preventDefault();
     if (!fileInput) {
@@ -240,13 +239,13 @@ export default function DashboardPage() {
 
       const result = await response.json();
 
-      // If CSV, also extract and store the data
+      
       let csvData = null;
       if (fileName.toLowerCase().endsWith(".csv")) {
         csvData = await extractCSVData(fileContent);
       }
 
-      // Save to Firestore
+     
       await addDoc(collection(db, "analysisRecords"), {
         userEmail: user.email,
         fileName: fileName,
@@ -260,7 +259,7 @@ export default function DashboardPage() {
       setAnalysisMessage("File analysis saved successfully!");
       setFileInput(null);
 
-      // Refresh analysis records
+      
       const recordsRef = collection(db, "analysisRecords");
       const q = query(
         recordsRef,
@@ -349,7 +348,7 @@ export default function DashboardPage() {
           </button>
         </div>
 
-        {/* Initialization Error Banner */}
+        
         {initError && (
           <div className="mb-6 bg-red-50 border border-red-200 text-red-800 p-4 rounded-lg">
             <p className="font-semibold">⚠️ Setup Required</p>
@@ -357,7 +356,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Profile Tab */}
+        
         {activeTab === "profile" && (
           <div className="bg-white p-8 rounded-2xl shadow">
             <h2 className="text-2xl font-semibold mb-6 text-gray-900">
@@ -385,10 +384,10 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Analyze Tab */}
+        
         {activeTab === "analyze" && (
           <div className="space-y-6">
-            {/* Text Analysis Section */}
+          
             <div className="bg-white p-8 rounded-2xl shadow">
               <h2 className="text-2xl font-semibold mb-4 text-gray-900">
                 Paste Comments
@@ -411,7 +410,7 @@ export default function DashboardPage() {
               </form>
             </div>
 
-            {/* File Upload Section */}
+         
             <div className="bg-white p-8 rounded-2xl shadow">
               <h2 className="text-2xl font-semibold mb-4 text-gray-900">
                 Upload File
@@ -447,7 +446,7 @@ export default function DashboardPage() {
               </form>
             </div>
 
-            {/* Analysis Message */}
+            
             {analysisMessage && (
               <div className={`border-l-4 p-5 rounded-lg font-medium transition-all ${
                 analysisMessage.includes("Error") || analysisMessage.includes("Rate limit")
@@ -463,7 +462,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Past Records Tab */}
+        
         {activeTab === "records" && (
           <div className="bg-white p-8 rounded-2xl shadow">
             <h2 className="text-2xl font-semibold mb-6 text-gray-900">
@@ -484,7 +483,7 @@ export default function DashboardPage() {
                     key={record.id}
                     className="border border-gray-300 rounded-xl p-6 hover:shadow-lg transition bg-gradient-to-br from-white to-gray-50"
                   >
-                    {/* Header */}
+                   
                     <div className="flex justify-between items-start mb-4 pb-4 border-b border-gray-200">
                       <div>
                         <h3 className="font-bold text-lg text-gray-900">
@@ -506,7 +505,7 @@ export default function DashboardPage() {
                       </span>
                     </div>
 
-                    {/* CSV Data Preview */}
+                   
                     {record.csvData && (
                       <div className="mb-5">
                         <p className="text-xs font-bold text-gray-700 mb-3 uppercase tracking-wide">
@@ -531,7 +530,7 @@ export default function DashboardPage() {
                       </div>
                     )}
 
-                    {/* AI Analysis */}
+                   
                     <div className="mb-4 bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 p-5 rounded-lg">
                       <p className="text-xs font-bold text-indigo-900 mb-3 uppercase tracking-wide">
                         🤖 AI Analysis & Insights
@@ -543,7 +542,7 @@ export default function DashboardPage() {
                       </div>
                     </div>
 
-                    {/* Original Content */}
+                    
                     {record.type === "text" && (
                       <div className="bg-gray-100 border border-gray-300 p-5 rounded-lg">
                         <p className="text-xs font-bold text-gray-700 mb-3 uppercase tracking-wide">
